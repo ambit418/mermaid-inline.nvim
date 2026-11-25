@@ -4,6 +4,8 @@ Render Mermaid code blocks in Markdown buffers as Unicode box-drawing text, righ
 
 Rendering is delegated to [mmdflux](https://crates.io/crates/mmdflux), which handles East Asian wide characters correctly.
 
+<img src="assets/screenshot.png" alt="Rendered Mermaid diagrams; the source is shown only while the cursor is inside the block" width="430">
+
 ## Features
 
 - Renders every ` ```mermaid ` block as virtual lines in place of the block

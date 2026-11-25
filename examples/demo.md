@@ -1,29 +1,29 @@
 # mermaid-inline.nvim demo
 
-## 開発フロー
+## Development flow
 
 ```mermaid
 flowchart TD
-  subgraph ローカル
-    A[コードを書く] --> B[テスト実行]
+  subgraph Local
+    A[Write code] --> B[Run tests]
   end
   subgraph CI
-    C[ビルド] --> D[デプロイ]
+    C[Build] --> D[Deploy]
   end
   B -->|push| C
 ```
 
-## ログイン処理
+## Login
 
 ```mermaid
 sequenceDiagram
-  participant U as ユーザー
-  participant W as Webサーバ
+  participant U as User
+  participant W as Web server
   participant D as DB
-  U->>W: ログイン要求
-  W->>D: パスワード照合
-  D-->>W: 結果
-  W-->>U: セッション発行
+  U->>W: Login request
+  W->>D: Verify password
+  D-->>W: Result
+  W-->>U: Issue session
 ```
 
 ## Network
