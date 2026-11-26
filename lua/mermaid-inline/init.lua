@@ -12,9 +12,11 @@ local ns_diag = vim.api.nvim_create_namespace("mermaid-inline-diagnostic")
 
 -- mermaid source -> { lines = {...} } | { err = "...", line = n }
 local cache = {}
--- buf -> { gen, blocks, transient, revealed }
+-- buf -> { gen, blocks, tick, transient, revealed, edit_seq }
 local state = {}
 local warned_missing = false
+
+local redraw_delay_ms = 150
 
 local query = nil
 
@@ -50,9 +52,13 @@ local function find_blocks(buf)
       if #delims == 2 then
         local start_row, end_row = delims[1], delims[2]
         local lines = vim.api.nvim_buf_get_lines(buf, start_row + 1, end_row, false)
+        -- virt_lines below the last buffer line cannot be scrolled into view, so attach below the line before the block
+        local below_prev = start_row > 0
         table.insert(blocks, {
           start_row = start_row,
           end_row = end_row,
+          below_prev = below_prev,
+          anchor_row = below_prev and start_row - 1 or start_row,
           source = table.concat(lines, "\n"),
         })
       end
@@ -72,6 +78,17 @@ local function parse_result(res)
   local stderr = res.stderr or ""
   local msg = stderr:match("Error: ([^\n]+)") or vim.trim(stderr)
   return { err = msg, line = tonumber(msg:match("line (%d+)")) }
+end
+
+-- Row positions go stale once the buffer is edited, so rescan before using them. Returns true if rescanned
+local function refresh_blocks(buf, st)
+  local tick = vim.api.nvim_buf_get_changedtick(buf)
+  if st.tick == tick then
+    return false
+  end
+  st.blocks = find_blocks(buf)
+  st.tick = tick
+  return true
 end
 
 local function result_for(st, block)
@@ -116,9 +133,16 @@ local function block_at(st, row)
   end
 end
 
+local draw
+
 local function update_conceal(buf, force)
   local st = state[buf]
   if not st then
+    return
+  end
+  if refresh_blocks(buf, st) then
+    -- Diagrams must move along with the blocks; draw() calls back here afterwards
+    draw(buf)
     return
   end
 
@@ -150,11 +174,12 @@ local function update_conceal(buf, force)
   end
 end
 
-local function draw(buf)
+function draw(buf)
   local st = state[buf]
   if not st or not vim.api.nvim_buf_is_valid(buf) then
     return
   end
+  refresh_blocks(buf, st)
   vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
 
   local avail = text_width(buf)
@@ -178,9 +203,6 @@ local function draw(buf)
         table.insert(virt, { { l, "MermaidInline" } })
       end
 
-      -- virt_lines below the last buffer line cannot be scrolled into view, so attach below the line before the block
-      b.below_prev = b.start_row > 0
-      b.anchor_row = b.below_prev and b.start_row - 1 or b.start_row
       vim.api.nvim_buf_set_extmark(buf, ns, b.anchor_row, 0, {
         virt_lines = virt,
         virt_lines_above = not b.below_prev,
@@ -216,7 +238,8 @@ function M.render(buf)
   local st = state[buf] or { gen = 0 }
   state[buf] = st
   st.gen = st.gen + 1
-  st.blocks = find_blocks(buf)
+  st.tick = nil
+  refresh_blocks(buf, st)
   st.transient = {}
   local gen = st.gen
 
@@ -245,6 +268,9 @@ end
 function M.open()
   local buf = vim.api.nvim_get_current_buf()
   local st = state[buf]
+  if st then
+    refresh_blocks(buf, st)
+  end
   local row = vim.api.nvim_win_get_cursor(0)[1] - 1
   local lines
   for _, b in ipairs(st and st.blocks or {}) do
@@ -300,6 +326,24 @@ function M.setup(opts)
     group = group,
     callback = function(args)
       update_conceal(args.buf)
+    end,
+  })
+
+  -- While editing, only move diagrams with their blocks using cached results; the renderer runs on save
+  vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
+    group = group,
+    callback = function(args)
+      local st = state[args.buf]
+      if not st then
+        return
+      end
+      st.edit_seq = (st.edit_seq or 0) + 1
+      local seq = st.edit_seq
+      vim.defer_fn(function()
+        if state[args.buf] == st and st.edit_seq == seq then
+          draw(args.buf)
+        end
+      end, redraw_delay_ms)
     end,
   })
 
